@@ -2,11 +2,11 @@
 微服务之构建容错&自动降级的系统 
 ----------
 ###微服务之后，前端（Web、App）怎么开发？
-以电商APP为例，需要购物车、物流服务、商品服务、推荐服务、订单服务、评价服务、类目服务....
+以电商APP为例，需要购物车、物流服务、库存服务、推荐服务、订单服务、评价服务、商品类目服务....
 ![Alt text](./Graph-08.png)
 如果我们让APP分别去调用这些服务会带来什么后果？
-- 后端代码必须改造，因为APP调不了Dubbo协议（好复杂），我们得给每个服务都架设一个HTTP代理，也无法利用MicroService的服务发现机制（其实就是连不上Zookeeper），必须通过额外的nginx做负载均衡
-- 客户端的代码极其冗余，因为业务是需要融合的，很多页面需要发送多次请求才能返回给用户一个完成的View，特别是还有前后关联的调用，在APP上面用callback很不爽
+- 后端代码必须改造，因为APP调不了Dubbo协议（二进制的比较复杂），我们得给每个服务都架设一个HTTP代理，也无法利用MicroService的服务发现机制（暴露Zookeeper到公网，非常不安全），必须通过额外的nginx做负载均衡
+- 客户端的代码极其冗余，因为业务数据是需要融合的，很多页面需要发送多次请求才能返回给用户一个完成的View，再加上UI 的Callback hell，特别酸爽
 - 将内部的逻辑放到了客户端，一旦服务有拆分、融合之类的操作，APP也必须升级
 ###适配移动化的BFF架构
 在微服务和APP之间建立一个沟通的桥梁，一个网关（Gateway），我们称之为<strong>Backend for Fronter</strong>，一个专为前端准备的后端（绕口令中）
@@ -15,8 +15,17 @@ BFF职责是路由、聚合、协议转换。
 每个请求BFF都可能会调用后面多个微服务的Dubbo接口，将结果聚合后返回给前台。BFF需要给前端更粗颗粒的接口，避免APP的多次调用降低效率。比如/products/{productId}这样的接口会将商品标题、规格、图片、详情页面、评价一股脑的返回给前台。
 ###优缺点
 优点：提供了一站式的接口，隐藏内部逻辑，对前端开发友好
-缺点：对高可用的架构来说，这个点的职责较重。
+缺点：对高可用的架构来说，这个单点的职责较重。
 
+###微服务后，中心应该如何开发？
+以商品中心为例：一个大的商品中心服务可以被拆为类目、商品、价格、库存四个微服务。这样每个服务的职责专注，接口单一。每个服务可以有自己的存储，甚至可以用不同的存储，比如商品适合Elasticsearch的搜索引擎，库存就适合Redis这样的内存数据库。这样系统的性能提升。
+问题又出现了，服务拆开，本来一个接口能返回的数据，必须通过分别调用不同服务的接口来完成。更糟糕的是，不同的服务使用不同的存储引擎，以前一个sql join能解决的事情，变得非常的复杂。
+如何解决？
+- 得益于现在技术的提升，我们可以在BFF侧使用zip、join这类的函数式写法替代原来的多层循环来更高效聚合数据。
+- 可以使用最新的思路在客户端缓存数据，相当于在app、js侧做了一个数据拷贝的子集（mongodb？），通过diff之类的算法和后端不断同步数据。（类似firebase，野狗的思路）
+- 使用类似物化视图的概念，在业务侧生成他需要的视图数据。加快查询速度。
+![Alt text](./1461741321743.png)
+以上方案视具体情况而定
 
 ###Backend for Fronter和SOA配合的烦恼
 一旦涉及到调用多个后台SOA的接口，SOA接口之间有一定关联关系，需要将结果组合，这组调用的危险性就很大。
@@ -83,7 +92,7 @@ http://git.dev.qianmi.com/commons/micro-service-frontend-sample.git
 	    @Override
 	    @HystrixCommand(fallbackMethod = "defaultPrice", commandProperties = {
 	            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "500"),
-	            @HystrixProperty(name = "hystrix.command.default.circuitBreaker.requestVolumeThreshold", value = "2")})
+	            @HystrixProperty(name = "circuitBreaker.requestVolumeThreshold", value = "10")})
 	    public List<ItemPrice> getPrice(String... itemids) {
 	        return pricingProvider.getPrice(itemids);
 	    }
@@ -105,7 +114,7 @@ https://ahus1.github.io/hystrix-examples/manual.html
 
 ### 最佳实践
 ####几个重要的参数说明
-- hystrix.command.HystrixCommandKey.execution.isolation.thread.timeoutInMilliseconds
+- execution.isolation.thread.timeoutInMilliseconds
 这个用于设置超时时间，默认是1000ms
 
 - execution.isolation.strategy
@@ -119,14 +128,35 @@ https://ahus1.github.io/hystrix-examples/manual.html
 ####如何设置线程池的大小
 ![Alt text](./thread-configuration-640.png)
 
-打个比方，经过测量，一个远程接口的返回时间
+打个比方，经过统计，一个远程接口的返回时间
 <code>
 Median: 40ms
 99th: 200ms
 99.5th: 300ms
 </code>
+
 - 线程池的计算公式
 requests per second at peak when healthy × 99th percentile latency in seconds + some breathing room
 99%的请求都会在200ms内返回，一个高峰期并发30个每秒
 那么thread pool size = 30 rps * 0.2 seconds = 6 + breathing room(冗余量) =10 threads
-设置执行线程的超时时间为300ms，
+99%的请求都会在200ms之内返回，考虑到在失败时，设置一次retry，那么大概就是240ms左右，这样的话设置执行线程的超时时间为300ms。
+如果设置得当，一般来说，线程池的Active Thread只会有1-2个，大部分的40ms内的请求会很快的处理掉。
+
+- Thread pool设置
+
+	    @HystrixCommand(commandProperties = {
+	            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "500")
+	        },
+	                threadPoolProperties = {
+	                        @HystrixProperty(name = "coreSize", value = "30"),
+	                        @HystrixProperty(name = "maxQueueSize", value = "101"),
+	                        @HystrixProperty(name = "keepAliveTimeMinutes", value = "2"),
+	                        @HystrixProperty(name = "queueSizeRejectionThreshold", value = "15"),
+	                        @HystrixProperty(name = "metrics.rollingStats.numBuckets", value = "12"),
+	                        @HystrixProperty(name = "metrics.rollingStats.timeInMilliseconds", value = "1440")
+	        })
+	    public User getUserById(String id) {
+	        return userResource.getUserById(id);
+	    }
+
+
