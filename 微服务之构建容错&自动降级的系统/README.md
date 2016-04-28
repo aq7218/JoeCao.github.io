@@ -2,14 +2,14 @@
 微服务之构建容错&自动降级的系统 
 ----------
 ###微服务之后，前端（Web、App）怎么开发？
-以电商APP为例，需要购物车、物流服务、库存服务、推荐服务、订单服务、评价服务、商品类目服务....
+以电商APP为例，需要购物车、物流服务、库存服务、推荐服务、订单服务、评价服务、商品类目服务....  
 ![Alt text](./Graph-08.png)
 如果我们让APP分别去调用这些服务会带来什么后果？
 - 后端代码必须改造，因为APP调不了Dubbo协议（二进制的比较复杂），我们得给每个服务都架设一个HTTP代理，也无法利用MicroService的服务发现机制（暴露Zookeeper到公网，非常不安全），必须通过额外的nginx做负载均衡
 - 客户端的代码极其冗余，因为业务数据是需要融合的，很多页面需要发送多次请求才能返回给用户一个完成的View，再加上UI 的Callback hell，特别酸爽
 - 将内部的逻辑放到了客户端，一旦服务有拆分、融合之类的操作，APP也必须升级
 ###适配移动化的BFF架构
-在微服务和APP之间建立一个沟通的桥梁，一个网关（Gateway），我们称之为<strong>Backend for Fronter</strong>，一个专为前端准备的后端（绕口令中）
+在微服务和APP之间建立一个沟通的桥梁，一个网关（Gateway），我们称之为<strong>Backend for Fronter</strong>，一个专为前端准备的后端（绕口令中）  
 ![Alt text](./Graph-09.png)
 BFF职责是路由、聚合、协议转换。
 每个请求BFF都可能会调用后面多个微服务的Dubbo接口，将结果聚合后返回给前台。BFF需要给前端更粗颗粒的接口，避免APP的多次调用降低效率。比如/products/{productId}这样的接口会将商品标题、规格、图片、详情页面、评价一股脑的返回给前台。
@@ -23,15 +23,15 @@ BFF职责是路由、聚合、协议转换。
 如何解决？
 - 得益于现在技术的提升，我们可以在BFF侧使用zip、join这类的函数式写法替代原来的多层循环来更高效聚合数据。
 - 可以使用最新的思路在客户端缓存数据，相当于在app、js侧做了一个数据拷贝的子集（mongodb？），通过diff之类的算法和后端不断同步数据。（类似firebase，野狗的思路）
-- 使用类似物化视图的概念，在业务侧生成他需要的视图数据。加快查询速度。
+- 使用类似物化视图的概念，在业务侧生成他需要的视图数据。加快查询速度。  
 ![Alt text](./1461741321743.png)
-以上方案视具体情况而定
+以上方案视情况采用
 
 ###Backend for Fronter和SOA配合的烦恼
 一旦涉及到调用多个后台SOA的接口，SOA接口之间有一定关联关系，需要将结果组合，这组调用的危险性就很大。
 以我们常见的商品列表的接口举例，该接口不仅仅是调用了商品中心商品信息接口，还调用了定价服务的用户级别价格接口，然后组合（zip）成为一个商品完整信息返回。
 在某些情况下价格服务失效，或者是返回时长波动，那么整个商品列表就一直会阻塞，直到超时也不会返回结果，用户在前台看到的是一个***空白的转圈的页面***。 用户只会认为整个系统都挂了，他可不管你里面发生了什么。
-微服务架构成规模后，任何一个我们认为的微不足道的服务的故障，都会导致整个业务的不可用。而在SOA模式下面数千个服务，可能有一定的几率某几个服务是失效的，这种minor的失效导致整个系统不可用的失败，是SOA的一大硬伤。
+微服务架构成规模后，任何一个我们认为的微不足道的服务的故障，都会导致整个业务的不可用。而在SOA模式下面数千个服务，可能有一定的几率某几个服务是失效的，这种minor的失效导致整个系统不可用的失败，是SOA的一大硬伤。  
 ![Alt text](./Richardson-microservices-part3-threads-blocked-1024x383.png)
 
 在后端服务失效这种情况下，我们希望API网关能做到
@@ -40,7 +40,7 @@ BFF职责是路由、聚合、协议转换。
 - 如果有可能，降级到某个缓存或者备用服务上
 - 快速的跟踪到错误位置
 - 防止失效扩散到整个集群
-- 如果服务正常了，前端API网关能够自动恢复
+- 如果服务正常了，前端API网关能够自动恢复  
 ![Alt text](./HystrixFallback.png)
 
 ### Hystrix 是什么？
@@ -63,11 +63,11 @@ Hystrix提供了贴心的Fallback（回落、降级，怎么称呼好呢？）�
 -- 如果是导出一个订单列表或者统计一个报表之类的操作，就不要Fallback了，让他异步执行吧，没有必要降级。
 
 ### CircuitBreaker模式
-Martin Flower 曾经总结了一个CircuitBreaker的模式，就是在服务故障的情况下，迅速做出反应，不让故障扩散
+Martin Flower 曾经总结了一个CircuitBreaker的模式，就是在服务故障的情况下，迅速做出反应，不让故障扩散  
 ![Alt text](./circuit-breaker.png)
 在图中看到，在可能出现超时的调用中，保护性的调用启动了两个线程，一个线程去实际调用，一个线程监控，如果超过设定的阈值，监控线程会返回一个默认值或者直接抛出异常给客户端，就不等那个真正的远调用线程的返回了
 当然这种对超时的控制，一般的RPC都会有（比如Dubbo做了mock的功能）。但是CircuitBreaker的高效之处在于过了一段时间后，可以检测接口的状况，如果接口正常了，自动恢复。
-在这里Martin Flower设计了一个“half open”半开的状态
+在这里Martin Flower设计了一个“half open”半开的状态  
 ![Alt text](./open-state.png)
 
 
@@ -118,14 +118,14 @@ https://ahus1.github.io/hystrix-examples/manual.html
 这个用于设置超时时间，默认是1000ms
 
 - execution.isolation.strategy
-这里有两个选择，一个是thread 一个semaphore，thread会启动线程池，默认为10个，主要用于控制外部系统的API调用。semaphore是控制内部的API调用，本机调用（顺便说一下其实Hystrix不仅仅用于RPC场景）
+这里有两个选择，一个是thread 一个semaphore，thread会启动线程池，默认为10个，主要用于控制外部系统的API调用。semaphore是控制内部的API调用，本机调用（顺便说一下其实Hystrix不仅仅用于RPC场景）  
 ![Alt text](./isolation-options-640.png)
 
 - circuitBreaker.requestVolumeThreshold
 这个参数决定了，有规定时间内（一般是10s），有多少个错误请求，会触发circuit breaker open。默认20个
 - circuitBreaker.sleepWindowInMilliseconds
-该参数决定了，在circuit break 进入到open状态后，多少时间会再次尝试进入
-####如何设置线程池的大小
+该参数决定了，在circuit break 进入到open状态后，多少时间会再次尝试进入  
+####如何设置线程池的大小  
 ![Alt text](./thread-configuration-640.png)
 
 打个比方，经过统计，一个远程接口的返回时间
